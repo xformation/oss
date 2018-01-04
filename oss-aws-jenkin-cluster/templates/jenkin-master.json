@@ -1,0 +1,779 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "[Child]Creates the front-end or \"master\" node for Jenkins.",
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Description": "The Jenkins front-end instance type",
+      "Default": "t2.micro",
+      "AllowedValues": [
+        "t2.micro",
+        "t2.small",
+        "t2.medium",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge",
+        "c4.large",
+        "c4.xlarge",
+        "c4.2xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge",
+        "r3.large",
+        "r3.xlarge",
+        "r3.2xlarge",
+        "r3.4xlarge",
+        "r3.8xlarge",
+        "i2.xlarge",
+        "i2.2xlarge",
+        "i2.4xlarge",
+        "i2.8xlarge",
+        "d2.xlarge",
+        "d2.2xlarge",
+        "d2.4xlarge",
+        "d2.8xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "KeyName": {
+      "Type": "String",
+      "Default": "mykey"
+    },
+    "JenkinsSlaveSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "ID of the slave cluster security group to allow ingress from."
+    },
+    "MasterInstanceName": {
+      "Type": "String",
+      "Description": "Name to identify cluster's front-end instance",
+      "Default": "EcsJenkinsMaster"
+    },
+    "ArtifactBucket": {
+      "Type": "String",
+      "Description": "S3 bucket to provide access for storing artifacts in, e.g. toy-poc-artifacts",
+      "Default": ""
+    },
+    "JenkinsRestoreUrl": {
+      "Type": "String",
+      "Description": "S3 URL to restore Jenkins from whenever an instance is launched, e.g. s3://toy-jenkins-config/jenkins-backup.tar. Leave blank to skip restore.",
+      "Default": ""
+    },
+    "JenkinsBackupUrl": {
+      "Type": "String",
+      "Description": "S3 URL to back up Jenkins to periodically, e.g. s3://toy-jenkins-config/jenkins-backup.tar. Leave blank to skip automated backups.",
+      "Default": ""
+    },
+    "BackupSchedule": {
+      "Type": "String",
+      "Description": "Cron expression for when to run a backup of Jenkins and SonarQube, e.g. 15 * * * *",
+      "Default": "15 * * * *"
+    },
+    "NotificationTopic": {
+      "Type": "String",
+      "Description": "(Optional) CloudWatch Topic ARN to notify when an instance is launched / terminated.",
+      "Default": ""
+    },
+    "JenkinsEfsSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "The security group that grants access to EFS"
+    },
+    "SshSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "The security group that grants access to EFS"
+    },
+    "FileSystem": {
+      "Type": "String",
+      "Description": "The file system to attach to the Docker Instances"
+    },
+    "JenkinsMemory": {
+      "Type": "Number",
+      "Description": "RAM, in megabytes, to allocate for Jenkins.",
+      "Default": "1024",
+      "MinValue": "512"
+    },
+    "ConfigBucket": {
+      "Type": "String",
+      "Description": "URL of S3 bucket to pull configs from, e.g. s3://toy-jenkins-config/",
+      "AllowedPattern": "^s3:\/\/.*\/$"
+    },
+    "BackupBucket": {
+      "Type": "String",
+      "Description": "URL of S3 bucket to pull configs from, e.g. s3://toy-jenkins-config/",
+      "AllowedPattern": "^s3:\/\/.*\/$"
+    },
+    "PrivateSubnets": {
+      "Description": "Choose which subnets this ECS cluster should be deployed to",
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "PublicSubnets": {
+      "Description": "Choose which subnets this ECS cluster should be deployed to",
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "WhitelistIP": {
+      "Description": "CIDR IP range to allow to access the Jumpbox.",
+      "Type": "String",
+      "AllowedPattern": "^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([0-9]|1[0-9]|2[0-9]|3[0-2])$",
+      "ConstraintDescription": "Must be a valid CIDR range in the form x.x.x.x/x"
+    },
+    "VPC": {
+      "Description": "Choose which VPC this ECS cluster should be deployed to",
+      "Type": "AWS::EC2::VPC::Id"
+    }
+  },
+  "Mappings": {
+    "AWSRegionToAMI": {
+      "us-east-1": {
+        "AMIID": "ami-6869aa05"
+      },
+      "us-west-1": {
+        "AMIID": "ami-31490d51"
+      },
+      "us-west-2": {
+        "AMIID": "ami-7172b611"
+      },
+      "eu-west-1": {
+        "AMIID": "ami-f9dd458a"
+      },
+      "eu-central-1": {
+        "AMIID": "ami-ea26ce85"
+      },
+      "ap-northeast-1": {
+        "AMIID": "ami-374db956"
+      },
+      "ap-southeast-1": {
+        "AMIID": "ami-a59b49c6"
+      },
+      "ap-southeast-2": {
+        "AMIID": "ami-dc361ebf"
+      }
+    }
+  },
+  "Conditions": {
+    "TopicProvided": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "NotificationTopic"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "JenkinsMasterRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerServiceFullAccess",
+          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "artifactstorageaccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:*"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "ArtifactBucket"
+                        },
+                        "/*"
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "jenkins-ec2-plugin-requirements",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": {
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:DescribeSpotInstanceRequests",
+                  "ec2:CancelSpotInstanceRequests",
+                  "ec2:GetConsoleOutput",
+                  "ec2:RequestSpotInstances",
+                  "ec2:RunInstances",
+                  "ec2:StartInstances",
+                  "ec2:StopInstances",
+                  "ec2:TerminateInstances",
+                  "ec2:CreateTags",
+                  "ec2:DeleteTags",
+                  "ec2:DescribeInstances",
+                  "ec2:DescribeKeyPairs",
+                  "ec2:DescribeRegions",
+                  "ec2:DescribeImages",
+                  "ec2:DescribeAvailabilityZones",
+                  "ec2:DescribeSecurityGroups",
+                  "ec2:DescribeSubnets"
+                ],
+                "Resource": [
+                  "*"
+                ]
+              }
+            }
+          },
+          {
+            "PolicyName": "stable-stage-groovy-script-requirements",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": {
+                "Effect": "Allow",
+                "Action": [
+                  "ecr:DescribeImages"
+                ],
+                "Resource": [
+                  "*"
+                ]
+              }
+            }
+          }
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      },
+      "Metadata": {
+      }
+    },
+    "JenkinsMasterInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "JenkinsMasterRole"
+          }
+        ]
+      }
+    },
+    "ASG": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "VPCZoneIdentifier": {
+          "Ref": "PrivateSubnets"
+        },
+        "DesiredCapacity": "1",
+        "LaunchConfigurationName": {
+          "Ref": "LaunchConfiguration"
+        },
+        "LoadBalancerNames": [
+          {
+            "Ref": "ELB"
+          },
+          {
+            "Ref": "InternalELB"
+          }
+        ],
+        "MinSize": "1",
+        "MaxSize": "1",
+        "NotificationConfigurations": [
+          {
+            "Fn::If": [
+              "TopicProvided",
+              {
+                "NotificationTypes": [
+                  "autoscaling:EC2_INSTANCE_LAUNCH",
+                  "autoscaling:EC2_INSTANCE_TERMINATE"
+                ],
+                "TopicARN": {
+                  "Ref": "NotificationTopic"
+                }
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Ref": "MasterInstanceName"
+            },
+            "PropagateAtLaunch": "true"
+          }
+        ]
+      }
+    },
+    "LaunchConfiguration": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": "30",
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "JenkinsMasterInstanceProfile"
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionToAMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMIID"
+          ]
+        },
+        "InstanceMonitoring": "false",
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "JenkinsMasterSecurityGroup"
+          },
+          {
+            "Ref": "ElbAccessSecurityGroup"
+          },
+          {
+            "Ref": "SshSecurityGroup"
+          },
+          {
+            "Ref": "JenkinsEfsSecurityGroup"
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "export CONFIG_BUCKET=",
+                {
+                  "Ref": "ConfigBucket"
+                },
+                "\n",
+                "export BACKUP_BUCKET=",
+                {
+                  "Ref": "BackupBucket"
+                },
+                "\n",
+                "export JENKINS_MEMORY=",
+                {
+                  "Ref": "JenkinsMemory"
+                },
+                "\n",
+                "export JENKINS_RESTORE_URL=",
+                {
+                  "Ref": "JenkinsRestoreUrl"
+                },
+                "\n",
+                "export JENKINS_BACKUP_URL=",
+                {
+                  "Ref": "JenkinsBackupUrl"
+                },
+                "\n",
+                "export JENKINS_BACKUP_SCHEDULE=\"",
+                {
+                  "Ref": "BackupSchedule"
+                },
+                "\"\n",
+                "export EFS_FILE_SYSTEM=\"",
+                {
+                  "Ref": "FileSystem"
+                },
+                "\"\n",
+                "export AWS_REGION=\"",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\"\n",
+                "aws s3 cp ",
+                {
+                  "Ref": "ConfigBucket"
+                },
+                "jenkins-master-bootstrap.sh .\n",
+                "bash -xe jenkins-master-bootstrap.sh\n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "ELB": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "Subnets": {
+          "Ref": "PublicSubnets"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "ExternalElbSecurityGroup"
+          }
+        ],
+        "Listeners": [
+          {
+            "LoadBalancerPort": 80,
+            "InstancePort": 8081,
+            "Protocol": "TCP"
+          }
+        ],
+        "CrossZone": "true",
+        "HealthCheck": {
+          "Target": "TCP:8081",
+          "HealthyThreshold": "2",
+          "UnhealthyThreshold": "10",
+          "Interval": "30",
+          "Timeout": "5"
+        }
+      }
+    },
+    "InternalELB": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "Scheme": "internal",
+        "Subnets": {
+          "Ref": "PrivateSubnets"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "InternalElbSecurityGroup"
+          }
+        ],
+        "Listeners": [
+          {
+            "LoadBalancerPort": 80,
+            "InstancePort": 8081,
+            "Protocol": "TCP"
+          },
+          {
+            "LoadBalancerPort": 50000,
+            "InstancePort": 50000,
+            "Protocol": "TCP"
+          }
+        ],
+        "CrossZone": "true",
+        "HealthCheck": {
+          "Target": "TCP:8081",
+          "HealthyThreshold": "2",
+          "UnhealthyThreshold": "10",
+          "Interval": "30",
+          "Timeout": "5"
+        }
+      }
+    },
+    "ExternalElbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows HTTP from the internet to the Jenkins ELB. Bitbucket IPs are whitelisted for webhooks.",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "FromPort": 80,
+            "ToPort": 80,
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "InternalElbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows HTTP from internal slaves to Jenkins and SonarQube.",
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "JenkinsSlaveSecurityGroup"
+            },
+            "FromPort": 80,
+            "ToPort": 80,
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "JenkinsSlaveSecurityGroup"
+            },
+            "FromPort": 50000,
+            "ToPort": 50000,
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "ElbAccessSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows traffic from the ELB to the Jenkins instance.",
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "ExternalElbSecurityGroup"
+            },
+            "FromPort": 8081,
+            "ToPort": 8081,
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "ExternalElbSecurityGroup"
+            },
+            "FromPort": 9000,
+            "ToPort": 9000,
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "InternalElbSecurityGroup"
+            },
+            "FromPort": 8081,
+            "ToPort": 8081,
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "InternalElbSecurityGroup"
+            },
+            "FromPort": 9000,
+            "ToPort": 9000,
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "InternalElbSecurityGroup"
+            },
+            "FromPort": 50000,
+            "ToPort": 50000,
+            "IpProtocol": "tcp"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "JumpboxSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows SSH access to Jumpbox from the internet.",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": {
+              "Ref": "WhitelistIP"
+            },
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpProtocol": "tcp"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  {
+                    "Ref": "EnvironmentName"
+                  },
+                  "jumpbox-access"
+                ]
+              ]
+            }
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SshAccessSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows Jumpbox access to the instances this group is assigned to.",
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "JumpboxSecurityGroup"
+            },
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpProtocol": "tcp"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  {
+                    "Ref": "EnvironmentName"
+                  },
+                  "ssh-access"
+                ]
+              ]
+            }
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "JenkinsMasterSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows Jenkins to communicate with the slave cluster",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "50000",
+            "ToPort": "50000",
+            "SourceSecurityGroupId": {
+              "Ref": "JenkinsSlaveSecurityGroup"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "8081",
+            "ToPort": "8081",
+            "SourceSecurityGroupId": {
+              "Ref": "JenkinsSlaveSecurityGroup"
+            }
+          }
+        ]
+      }
+    },
+    "JmeterFleetSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allows the Jmeter coordinator to communicate to Jenkins master over SSH and allows Jmeter slaves to communicate with Jmeter coordinator",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "SourceSecurityGroupId": {
+              "Ref": "JenkinsMasterSecurityGroup"
+            }
+          }
+        ]
+      }
+    },
+    "JmeterFleetSecurityGroupIngress50000": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "JmeterFleetSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "50000",
+        "ToPort": "50000",
+        "SourceSecurityGroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        }
+      }
+    },
+    "JmeterFleetSecurityGroupIngress60000": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "JmeterFleetSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "60000",
+        "ToPort": "60000",
+        "SourceSecurityGroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        }
+      }
+    },
+    "JmeterFleetSecurityGroupIngress1099": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "DependsOn": "JmeterFleetSecurityGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": "1099",
+        "ToPort": "1099",
+        "SourceSecurityGroupId": {
+          "Ref": "JmeterFleetSecurityGroup"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "InternalJenkinsURL": {
+      "Value": {
+        "Fn::GetAtt": [
+          "InternalELB",
+          "DNSName"
+        ]
+      }
+    },
+    "ExternalJenkinsURL": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ELB",
+          "DNSName"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+template_path: templates/jenkin-security-groups.json
+parameters:
+  EnvironmentName: !stack_output ossbackbone::EnvironmentName
+  VPC:  !stack_output ossbackbone::VPC
+  WhitelistIP: 0.0.0.0/0

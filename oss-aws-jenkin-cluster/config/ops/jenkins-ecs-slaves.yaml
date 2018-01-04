@@ -1,0 +1,10 @@
+template_path: templates/jenkin-ecs-slaves.json
+parameters:
+  EnvironmentName: !stack_output ossbackbone::EnvironmentName
+  ArtifactBucket: s3://synectiks-config/
+  JenkinsEfsSecurityGroup:  !stack_output jenkin-efs::JenkinsEfsAccessSecurityGroup
+  FileSystem: !stack_output jenkin-efs::FileSystem
+  VPC:  !stack_output ossbackbone::VPC
+  PrivateSubnets: !stack_output ossbackbone::PrivateSubnets
+  SshSecurityGroup: !stack_output jenkin-security-groups::SshSecurityGroup
+  JenkinsClusterSecurityGroup: !stack_output jenkin-security-groups::JenkinsClusterSecurityGroup

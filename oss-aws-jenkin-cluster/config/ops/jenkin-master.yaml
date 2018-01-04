@@ -1,0 +1,16 @@
+template_path: templates/jenkin-master.json
+
+parameters:
+  EnvironmentName: !stack_output ossbackbone::EnvironmentName
+  VPC:  !stack_output ossbackbone::VPC
+  PrivateSubnets: !stack_output ossbackbone::PrivateSubnets
+  PublicSubnets: !stack_output ossbackbone::PublicSubnets
+  JenkinsSlaveSecurityGroup: !stack_output jenkin-security-groups::JenkinsClusterSecurityGroup
+  ArtifactBucket: s3://synectiks-backup/
+  JenkinsEfsSecurityGroup:  !stack_output jenkin-efs::JenkinsEfsAccessSecurityGroup
+  FileSystem: !stack_output jenkin-efs::FileSystem
+  ConfigBucket: s3://synectiks-config/
+  BackupBucket: s3://synectiks-backup/
+  WhitelistIP: 0.0.0.0/0
+  SshSecurityGroup: !stack_output jenkin-security-groups::SshSecurityGroup
+  InstanceType: t2.medium

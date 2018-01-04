@@ -1,0 +1,7 @@
+template_path: templates/jenkin-efs.json
+
+parameters:
+  EnvironmentName: !stack_output ossbackbone::EnvironmentName
+  VPC:  !stack_output ossbackbone::VPC
+  PrivateSubnet1: !stack_output ossbackbone::PrivateSubnet1
+  PrivateSubnet2: !stack_output ossbackbone::PrivateSubnet2

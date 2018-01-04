@@ -1,0 +1,514 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "[Child]Creates an ECS cluster configured to run containerized builds for Jenkins.",
+  "Metadata": {
+  },
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String"
+    },
+    "InstanceType": {
+      "Description": "The EC2 slave instance type",
+      "Type": "String",
+      "Default": "t2.micro",
+      "AllowedValues": [
+        "t2.micro",
+        "t2.small",
+        "t2.medium",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge",
+        "c4.large",
+        "c4.xlarge",
+        "c4.2xlarge",
+        "c4.4xlarge",
+        "c4.8xlarge",
+        "r3.large",
+        "r3.xlarge",
+        "r3.2xlarge",
+        "r3.4xlarge",
+        "r3.8xlarge",
+        "i2.xlarge",
+        "i2.2xlarge",
+        "i2.4xlarge",
+        "i2.8xlarge",
+        "d2.xlarge",
+        "d2.2xlarge",
+        "d2.4xlarge",
+        "d2.8xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "SlaveInstanceName": {
+      "Description": "Name to identify cluster's slave instances",
+      "Type": "String",
+      "Default": "EcsJenkinsSlave"
+    },
+    "MaxSize": {
+      "Description": "Maximum number of instances that can be launched in your slave cluster.",
+      "Type": "Number",
+      "Default": "5",
+      "MinValue": "1"
+    },
+    "ArtifactBucket": {
+      "Description": "S3 bucket to provide access for storing artifacts in.",
+      "Type": "String",
+      "Default": "toy-poc-artifacts"
+    },
+    "JenkinsEfsSecurityGroup": {
+      "Description": "The security group that grants access to EFS",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "FileSystem": {
+      "Description": "The file system to attach to the Docker Instances",
+      "Type": "String"
+    },
+    "PrivateSubnets": {
+      "Description": "Choose which subnets this ECS cluster should be deployed to",
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "VPC": {
+      "Description": "Choose which VPC this ECS cluster should be deployed to",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "JenkinsClusterSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "ID of the slave cluster security group to allow ingress from."
+    },
+    "KeyName": {
+      "Type": "String",
+      "Default": "mykey"
+    },
+    "SshSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "The security group that grants access to EFS"
+    }
+  },
+  "Mappings": {
+    "AWSRegionToAMI": {
+      "us-east-1": {
+        "AMIID": "ami-55870742"
+      },
+      "us-west-1": {
+        "AMIID": "ami-07713767"
+      },
+      "us-west-2": {
+        "AMIID": "ami-241bd844"
+      },
+      "eu-west-1": {
+        "AMIID": "ami-c74127b4"
+      },
+      "eu-central-1": {
+        "AMIID": "ami-3b54be54"
+      },
+      "ap-northeast-1": {
+        "AMIID": "ami-2b08f44a"
+      },
+      "ap-southeast-1": {
+        "AMIID": "ami-6b61bc08"
+      },
+      "ap-southeast-2": {
+        "AMIID": "ami-d5b59eb6"
+      }
+    }
+  },
+  "Resources": {
+    "ECSCluster": {
+      "Type": "AWS::ECS::Cluster"
+    },
+    "TemplateValidationAndAliasListing": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "cloudformation:ValidateTemplate"
+              ],
+              "Resource": [
+                "*"
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "iam:ListAccountAliases"
+              ],
+              "Resource": [
+                "*"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "JenkinsSlaveRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess",
+          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerServiceFullAccess",
+          "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess",
+          {
+            "Ref": "TemplateValidationAndAliasListing"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "metricaccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "ec2:DescribeTags",
+                    "autoscaling:DescribeAutoScalingInstances",
+                    "ec2:TerminateInstances",
+                    "s3:CreateBucket",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:PutBucketPolicy",
+                    "s3:DeleteBucketPolicy"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "artifactstorageaccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:*"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "ArtifactBucket"
+                        },
+                        "/*"
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "assumeroleaccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sts:AssumeRole"
+                  ],
+                  "Resource": [
+                    "*"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "jmeter-dependencies",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole",
+                    "ec2:DescribeInstances",
+                    "ec2:RunInstances",
+                    "ec2:TerminateInstances",
+                    "s3:PutBucketPolicy",
+                    "s3:DeleteBucketPolicy",
+                    "s3:DeleteBucket",
+                    "ec2:CreateTags"
+                  ],
+                  "Resource": [
+                    "*"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      },
+      "Metadata": {
+      }
+    },
+    "JmeterSlaveRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+        ],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      },
+      "Metadata": {
+      }
+    },
+    "JenkinsSlaveInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "JenkinsSlaveRole"
+          }
+        ]
+      }
+    },
+    "JenkinsSlaveAutoscalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "MinSize": "1",
+        "MaxSize": {
+          "Ref": "MaxSize"
+        },
+        "LaunchConfigurationName": {
+          "Ref": "JenkinsSlaveLaunchConfig"
+        },
+        "VPCZoneIdentifier": {
+          "Ref": "PrivateSubnets"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  {
+                    "Ref": "AWS::StackName"
+                  },
+                  {
+                    "Ref": "SlaveInstanceName"
+                  }
+                ]
+              ]
+            },
+            "PropagateAtLaunch": "true"
+          }
+        ]
+      },
+      "Metadata": {
+      }
+    },
+    "JenkinsSlaveLaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": {
+          "Ref": "JenkinsSlaveInstanceProfile"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "SshSecurityGroup"
+          },
+          {
+            "Ref": "JenkinsClusterSecurityGroup"
+          },
+          {
+            "Ref": "JenkinsEfsSecurityGroup"
+          }
+        ],
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionToAMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMIID"
+          ]
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "echo ECS_CLUSTER=",
+                {
+                  "Ref": "ECSCluster"
+                },
+                " >> /etc/ecs/ecs.config\n",
+                "echo ECS_AVAILABLE_LOGGING_DRIVERS=[\"json-file\",\"syslog\",\"awslogs\"] >> /etc/ecs/ecs.config\n",
+                "yum install -y aws-cfn-bootstrap\n",
+                "PATH=$PATH:/usr/local/bin\n",
+                "yum -y update\n",
+                "yum install -y nfs-utils\n",
+                "EC2_AVAIL_ZONE=`curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone`\n",
+                "EC2_REGION=",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "mkdir /mnt/efs\n",
+                "EFS_FILE_SYSTEM_ID=",
+                {
+                  "Ref": "FileSystem"
+                },
+                "\n",
+                "DIR_SRC=$EC2_AVAIL_ZONE.$EFS_FILE_SYSTEM_ID.efs.$EC2_REGION.amazonaws.com\n",
+                "DIR_TGT=/mnt/efs\n",
+                "touch /home/ec2-user/echo.res\n",
+                "echo $EFS_FILE_SYSTEM_ID >> /home/ec2-user/echo.res\n",
+                "echo $EC2_AVAIL_ZONE >> /home/ec2-user/echo.res\n",
+                "echo $EC2_REGION >> /home/ec2-user/echo.res\n",
+                "echo $DIR_SRC >> /home/ec2-user/echo.res\n",
+                "echo $DIR_TGT >> /home/ec2-user/echo.res\n",
+                "mount -t nfs4 $DIR_SRC:/ $DIR_TGT >> /home/ec2-user/echo.res\n",
+                "cp -p /etc/fstab /etc/fstab.back-$(date +%F)\n",
+                "echo -e \"$DIR_SRC:/ \t\t $DIR_TGT \t\t nfs \t\t defaults \t\t 0 \t\t 0\" | tee -a /etc/fstab\n",
+                "service docker stop\n",
+                "service docker start\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource ECSAutoScalingGroup ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Metadata": {
+      }
+    },
+    "ScaleUpSlavePolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "AdjustmentType": "ChangeInCapacity",
+        "AutoScalingGroupName": {
+          "Ref": "JenkinsSlaveAutoscalingGroup"
+        },
+        "Cooldown": "300",
+        "ScalingAdjustment": "1"
+      }
+    },
+    "CpuAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "1",
+        "Statistic": "Average",
+        "Threshold": "75",
+        "AlarmDescription": "Alarm if CPU too high or metric disappears indicating instance is down",
+        "Period": "300",
+        "AlarmActions": [
+          {
+            "Ref": "ScaleUpSlavePolicy"
+          }
+        ],
+        "Namespace": "AWS/ECS",
+        "Dimensions": [
+          {
+            "Name": "ClusterName",
+            "Value": {
+              "Ref": "ECSCluster"
+            }
+          }
+        ],
+        "ComparisonOperator": "GreaterThanThreshold",
+        "MetricName": "CPUUtilization"
+      }
+    },
+    "MemoryAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "1",
+        "Statistic": "Average",
+        "Threshold": "50",
+        "AlarmDescription": "Alarm if Memory too high or metric disappears indicating instance is down",
+        "Period": "300",
+        "AlarmActions": [
+          {
+            "Ref": "ScaleUpSlavePolicy"
+          }
+        ],
+        "Namespace": "AWS/ECS",
+        "Dimensions": [
+          {
+            "Name": "ClusterName",
+            "Value": {
+              "Ref": "ECSCluster"
+            }
+          }
+        ],
+        "ComparisonOperator": "GreaterThanThreshold",
+        "MetricName": "MemoryReservation"
+      }
+    }
+  },
+  "Outputs": {
+    "JenkinsClusterSecurityGroup": {
+      "Description": "The ID of the JenkinsClusterSecurityGroup",
+      "Value": {
+        "Ref": "JenkinsClusterSecurityGroup"
+      }
+    }
+  }
+}
